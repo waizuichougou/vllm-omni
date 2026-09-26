@@ -21,7 +21,7 @@ The final run requires two visible GPUs on one host. The prepared remote
 instance currently has no `/dev/nvidia*`, so `bootstrap_gpu.sh` intentionally
 fails until a GPU-backed instance is attached.
 
-After GPUs are attached:
+After GPUs are attached, check the existing environment without reinstalling it:
 
 ```bash
 cd /root/autodl-tmp/vllm-omni-needs/src/vllm-omni
@@ -38,11 +38,16 @@ vllm serve "$MODEL" --omni --port 8091 \
   --async-chunk --log-stats
 ```
 
-The HTTP client labels runs for the experiment log. The actual prefetch
-on/off parity is covered by the direct manager tests, because the current
-server deploy schema does not expose `prefetch_reads` as a user-facing flag.
-Keep separate JSON files for each server configuration and record the exact
-server command in the experiment log.
+For the cache-off control, restart the server with
+`vllm_omni/deploy/qwen3_omni_moe_autoround_item2_cache_off.yaml` instead.
+Both profiles keep talker and Code2Wav caching disabled.
+
+The HTTP client labels runs for the experiment log. The label does not switch
+prefetch: the current server deploy schema does not expose `prefetch_reads`.
+Prefetch on/off parity is covered only by direct manager tests; a server-level
+performance comparison requires a real runtime switch. Do not report the
+HTTP label as a server-side A/B test. Keep separate cache-on/cache-off runs,
+starting each run on a cold server, with exact commands and source SHA.
 
 ## Acceptance client
 
@@ -54,10 +59,13 @@ python tools/issue_7902/measure_acceptance.py \
   --output /root/autodl-tmp/vllm-omni-needs/results/item2-prefetch-on.json
 ```
 
-The client covers two identical repeat requests, one `n=2` request, and eight
-identical concurrent requests. It records status, wall time, response size,
-and response hashes. It does not claim accuracy equivalence for the
-quantized checkpoint; compare quality against a BF16 run separately.
+The client covers two sequential identical requests, one `n=2` request, and
+eight identical concurrent requests. It records status, wall time, response
+size, and response hashes and exits nonzero on failed requests. It does not
+compare response text or measure Seed-TTS WER. For issue acceptance, run a
+cache-off control on the same quantized checkpoint and collect text and audio
+outputs with a separate WER evaluation. A BF16 baseline is needed before
+claiming quality equivalence to the official checkpoint.
 
 ## No-GPU checks
 

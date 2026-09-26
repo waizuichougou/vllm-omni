@@ -28,6 +28,8 @@ def request(url: str, payload: dict, timeout: float) -> tuple[int, bytes, float]
             return response.status, response.read(), time.perf_counter() - start
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read(), time.perf_counter() - start
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return 0, str(exc).encode(), time.perf_counter() - start
 
 
 async def one(url: str, payload: dict, timeout: float) -> dict:
@@ -37,18 +39,21 @@ async def one(url: str, payload: dict, timeout: float) -> dict:
         "elapsed_s": round(elapsed, 4),
         "body_sha256": hashlib.sha256(body).hexdigest(),
         "body_bytes": len(body),
-        "error": None if status < 400 else body[:1000].decode(errors="replace"),
+        "error": None if 200 <= status < 300 else body[:1000].decode(errors="replace"),
     }
 
 
 async def run(args: argparse.Namespace) -> dict:
     url = args.base_url.rstrip("/") + "/v1/chat/completions"
-    base = {"model": args.model, "messages": [{"role": "user", "content": args.prompt}], "max_tokens": args.max_tokens}
+    base = {
+        "model": args.model,
+        "messages": [{"role": "user", "content": args.prompt}],
+        "temperature": 0.0,
+        "max_tokens": args.max_tokens,
+    }
     results: dict = {"base_url": args.base_url, "model": args.model, "prefetch_label": args.prefetch_label}
 
-    results["repeat"] = await asyncio.gather(
-        one(url, base, args.timeout), one(url, base, args.timeout)
-    )
+    results["repeat"] = [await one(url, base, args.timeout) for _ in range(2)]
     n2 = dict(base)
     n2["n"] = 2
     results["n2"] = [await one(url, n2, args.timeout)]
@@ -63,6 +68,8 @@ async def run(args: argparse.Namespace) -> dict:
         "responses": await asyncio.gather(*(one(url, item, args.timeout) for item in payloads)),
     }
     results["concurrency"]["wall_s"] = round(time.perf_counter() - started, 4)
+    responses = results["repeat"] + results["n2"] + results["concurrency"]["responses"]
+    results["ok"] = all(item["error"] is None for item in responses)
     return results
 
 
@@ -81,7 +88,7 @@ def main() -> int:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))
-    return 0
+    return 0 if result["ok"] else 1
 
 
 if __name__ == "__main__":
